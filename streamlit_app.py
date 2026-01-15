@@ -32,7 +32,7 @@ class WinnerCurseConfig:
 
     p_control: float = 0.10
     effect_scale: EffectScale = "risk_diff"
-    true_effect: float = 0.005  # RD delta OR relative lift, depending on effect_scale
+    true_effect: float = 0.005
 
     seed: int = 0
     continuity_correction: bool = False
@@ -185,8 +185,9 @@ def simulate_winners_curse_binary(cfg: WinnerCurseConfig) -> Dict[str, Any]:
 
 
 def build_summary_table(res: Dict[str, Any]) -> pd.DataFrame:
-    cfg: WinnerCurseConfig = res["cfg"]
-
+    """
+    Decision-oriented summary (no config block; inputs are visible in the sidebar).
+    """
     true_rd = res["true_rd"]
     true_rel = res["true_rel"]
 
@@ -211,31 +212,34 @@ def build_summary_table(res: Dict[str, Any]) -> pd.DataFrame:
     assumed_rel_win = safe_mean(win_rel)
 
     rows = [
-        ("Setup", "Treatments (K)", f"{cfg.n_variants}"),
-        ("Setup", "Total conditions (K+1 incl. control)", f"{cfg.n_variants + 1}"),
-        ("Setup", "n_control / n_treat", f"{cfg.n_control} / {cfg.n_treat}"),
-        ("Setup", "alpha", f"{cfg.alpha:.3f}"),
-        ("Setup", "two_sided", f"{cfg.two_sided}"),
-        ("Setup", "selection_rule", f"{cfg.selection_rule}"),
-        ("Setup", "p_control / p_treat", f"{cfg.p_control:.3f} / {res['p_treat']:.3f}"),
         ("Rates", "Any significant in portfolio", f"{res['any_sig_rate']:.3f}"),
         ("Rates", "Winner exists under rule", f"{res['winner_exists_rate']:.3f}"),
+
         ("Absolute (risk diff)", "True effect", f"{100*true_rd:.3f} pp"),
         ("Absolute (risk diff)", "Assumed effect (mean | significant)", f"{100*assumed_rd_sig:.3f} pp"),
         ("Absolute (risk diff)", "Inflation ratio (significant-only)", f"{safe_ratio(assumed_rd_sig, true_rd):.2f}x"),
         ("Absolute (risk diff)", "Assumed shipped effect (mean | winner)", f"{100*assumed_rd_win:.3f} pp"),
         ("Absolute (risk diff)", "Inflation ratio (winner)", f"{safe_ratio(assumed_rd_win, true_rd):.2f}x"),
+
         ("Relative lift", "True effect", f"{100*true_rel:.2f}%"),
         ("Relative lift", "Assumed effect (mean | significant)", f"{100*assumed_rel_sig:.2f}%"),
         ("Relative lift", "Inflation ratio (significant-only)", f"{safe_ratio(assumed_rel_sig, true_rel):.2f}x"),
         ("Relative lift", "Assumed shipped effect (mean | winner)", f"{100*assumed_rel_win:.2f}%"),
         ("Relative lift", "Inflation ratio (winner)", f"{safe_ratio(assumed_rel_win, true_rel):.2f}x"),
+
+        ("Counts", "Significant variant results pooled", f"{sig_rd.size}"),
+        ("Counts", "Winners (portfolios with a winner)", f"{win_rd.size}"),
     ]
 
-    return pd.DataFrame(rows, columns=["Section", "Metric", "Value"])
+    df = pd.DataFrame(rows, columns=["Section", "Metric", "Value"])
+    return df
 
 
-def make_figures(res: Dict[str, Any], bins: int = 120):
+def make_figures(res: Dict[str, Any], bins: int = 120, fig_w: float = 6.0, fig_h: float = 3.4):
+    """
+    Smaller figures for a two-column Streamlit layout.
+    True-effect line uses a non-blue color to avoid confusion with distributions.
+    """
     true_rd = res["true_rd"]
     true_rel = res["true_rel"]
 
@@ -251,7 +255,7 @@ def make_figures(res: Dict[str, Any], bins: int = 120):
     win_rel = res["winner_rel"][np.isfinite(res["winner_rel"])]
 
     # Risk difference figure
-    fig1 = plt.figure()
+    fig1 = plt.figure(figsize=(fig_w, fig_h))
     if all_rd.size:
         plt.hist(all_rd, bins=bins, density=True, alpha=0.25, color="lightgray",
                  label="All estimates (unconditional)")
@@ -261,15 +265,15 @@ def make_figures(res: Dict[str, Any], bins: int = 120):
     if win_rd.size:
         plt.hist(win_rd, bins=bins, density=True, histtype="step", linewidth=2,
                  label="Winner-selected")
-    plt.axvline(true_rd, linewidth=2, label="True effect (RD)")
-    plt.title("Observed Risk Difference: unconditional vs selected")
+    plt.axvline(true_rd, linewidth=2, color="black", linestyle="--", label="True effect (RD)")
+    plt.title("Risk Difference")
     plt.xlabel("Risk difference (treat - control)")
     plt.ylabel("Density")
-    plt.legend()
+    plt.legend(fontsize=9)
     plt.tight_layout()
 
     # Relative lift figure
-    fig2 = plt.figure()
+    fig2 = plt.figure(figsize=(fig_w, fig_h))
     if all_rel.size:
         plt.hist(all_rel, bins=bins, density=True, alpha=0.25, color="lightgray",
                  label="All estimates (unconditional)")
@@ -279,11 +283,11 @@ def make_figures(res: Dict[str, Any], bins: int = 120):
     if win_rel.size:
         plt.hist(win_rel, bins=bins, density=True, histtype="step", linewidth=2,
                  label="Winner-selected")
-    plt.axvline(true_rel, linewidth=2, label="True effect (relative)")
-    plt.title("Observed Relative Lift: unconditional vs selected")
+    plt.axvline(true_rel, linewidth=2, color="black", linestyle="--", label="True effect (relative)")
+    plt.title("Relative Lift")
     plt.xlabel("Relative lift ((p_t/p_c)-1)")
     plt.ylabel("Density")
-    plt.legend()
+    plt.legend(fontsize=9)
     plt.tight_layout()
 
     return fig1, fig2
@@ -291,7 +295,6 @@ def make_figures(res: Dict[str, Any], bins: int = 120):
 
 @st.cache_data(show_spinner=False)
 def run_simulation_cached(cfg: WinnerCurseConfig) -> Dict[str, Any]:
-    # dataclasses with frozen=True are hashable; safe for Streamlit caching
     return simulate_winners_curse_binary(cfg)
 
 
@@ -300,15 +303,21 @@ def main():
     st.title("Winner’s Curse in A/B/N Experimentation (Binary Outcome Simulator)")
 
     st.write(
-        "This app simulates an A/B/N test with K treatment variants vs a shared control, "
-        "then shows how selection (significant-only and winner-picked) inflates observed lift."
+        "Simulates an A/B/N test with K treatment variants vs a shared control, then shows how "
+        "selection (significant-only and winner-picked) inflates observed lift."
     )
 
     with st.sidebar:
         st.header("Simulation Controls")
 
         n_variants = st.number_input("Number of treatments (K)", min_value=1, max_value=100, value=10, step=1)
-        n_sims = st.number_input("Number of portfolios (simulations)", min_value=1_000, max_value=500_000, value=100_000, step=1_000)
+        n_sims = st.number_input(
+            "Number of portfolios (simulations)",
+            min_value=1_000,
+            max_value=500_000,
+            value=100_000,
+            step=1_000
+        )
         alpha = st.slider("alpha", min_value=0.001, max_value=0.20, value=0.05, step=0.001)
 
         two_sided = st.checkbox("Two-sided test", value=True)
@@ -340,7 +349,11 @@ def main():
         continuity_correction = st.checkbox("Continuity correction", value=False)
         seed = st.number_input("Random seed", min_value=0, max_value=1_000_000, value=0, step=1)
 
+        st.divider()
+        st.subheader("Display")
         bins = st.slider("Histogram bins", min_value=40, max_value=250, value=120, step=5)
+        fig_w = st.slider("Figure width", min_value=4.0, max_value=10.0, value=6.0, step=0.5)
+        fig_h = st.slider("Figure height", min_value=2.5, max_value=6.0, value=3.4, step=0.1)
 
     cfg = WinnerCurseConfig(
         n_variants=int(n_variants),
@@ -364,26 +377,35 @@ def main():
         return
 
     table = build_summary_table(res)
-    fig_rd, fig_rel = make_figures(res, bins=int(bins))
+    fig_rd, fig_rel = make_figures(res, bins=int(bins), fig_w=float(fig_w), fig_h=float(fig_h))
 
-    c1, c2 = st.columns([1, 2])
+    # Two column layout:
+    # - Left: summary table (and allow it to extend vertically)
+    # - Right: plots
+    c1, c2 = st.columns([1, 2], gap="large")
 
     with c1:
         st.subheader("Summary")
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        # Make the table "taller" and fit the column width
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+            height=720
+        )
 
     with c2:
         st.subheader("Distributions")
         st.pyplot(fig_rd, clear_figure=True)
         st.pyplot(fig_rel, clear_figure=True)
 
-    with st.expander("What the key rows mean"):
+    with st.expander("How to interpret the key rows"):
         st.write(
             "• **Assumed effect (mean | significant)**: what you would believe if you only looked at statistically significant variants.\n\n"
             "• **Inflation ratio (significant-only)**: (mean | significant) ÷ true effect.\n\n"
             "• **Assumed shipped effect (mean | winner)**: what you would believe if you ship the selected winner.\n\n"
             "• **Inflation ratio (winner)**: (mean | winner) ÷ true effect.\n\n"
-            "Gray distribution is the unconditional sampling distribution of estimates; colored lines are selected subsets."
+            "Gray is the unconditional sampling distribution; colored outlines are selected subsets."
         )
 
 
